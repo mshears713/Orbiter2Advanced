@@ -1,0 +1,54 @@
+# Orbiter-2 Development Notes
+
+## Environment Setup
+Date: 2025-11-19
+Python Version Required: 3.8+
+
+## Package Versions
+- numpy==1.24.3
+- scipy==1.10.1
+- pandas==2.0.2
+- matplotlib==3.7.1
+- plotly==5.14.1
+- streamlit==1.28.0
+- numba==0.57.0 (optional, for performance)
+- pytest==7.3.1
+- pytest-cov==4.1.0
+
+## Setup Steps
+1. Create virtual environment: python3 -m venv venv
+2. Activate environment:
+   - Unix/macOS: source venv/bin/activate
+   - Windows: venv\Scripts\activate
+3. Install dependencies: pip install -r requirements.txt
+4. Initialize database: python db/init_db.py
+5. Launch application: streamlit run dashboard/app.py
+
+## Development Status
+- [x] Step 1: Project structure initialized
+- [x] Step 2: Virtual environment and dependencies
+- [ ] Step 3-50: Remaining implementation steps
+
+## Known Issues
+None yet.
+
+## Performance Notes
+- Use numba JIT compilation for performance-critical numerical code
+- Vectorize operations with numpy where possible
+- Keep UI responsive with async/threaded simulation execution
+
+## Architecture Notes
+- All simulation modules inherit from SimulationModule base class
+- All visualizations inherit from Visualization base class
+- Database stores simulation metadata and logs
+- Streamlit handles UI and session state
+- Config module centralizes all parameters
+
+## Testing Strategy
+- Unit tests for individual modules
+- Integration tests for dashboard
+- Visualization tests for rendering
+- Run with: pytest tests/
+
+## Next Steps
+Continue with Phase 1 implementation following the 50-step plan.
