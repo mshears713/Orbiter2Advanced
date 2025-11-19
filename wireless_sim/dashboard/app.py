@@ -222,6 +222,203 @@ def render_welcome_page():
             st.text("Database not available")
 
 
+def render_high_order_modulation():
+    """Render High-Order Modulation simulation page."""
+    from simulations.high_order_modulation import HighOrderModulationSimulation
+    from visualizations.high_order_constellation import HighOrderConstellationPlot
+
+    st.header("📡 High-Order Modulation (Civilization 1)")
+
+    st.markdown("""
+    **Alien Civilization 1** uses advanced constellation modulation to encode multiple bits
+    per symbol. Explore how modulation order affects spectral efficiency and error rates.
+
+    **Learning Objectives:**
+    - Understand bit-to-symbol mapping
+    - Visualize constellation diagrams
+    - Observe noise effects on symbols
+    - Analyze BER vs SNR trade-offs
+    """)
+
+    # Create simulation instance
+    sim = HighOrderModulationSimulation()
+
+    # Layout: controls on left, visualization on right
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("⚙️ Parameters")
+
+        # Modulation order selection
+        mod_order = st.selectbox(
+            "Modulation Order",
+            options=[4, 16, 64, 256],
+            index=1,  # Default to 16-QAM
+            help="Higher orders encode more bits/symbol but are less noise-resistant"
+        )
+
+        # Number of symbols
+        num_symbols = st.slider(
+            "Number of Symbols",
+            min_value=100,
+            max_value=2000,
+            value=500,
+            step=100,
+            help="More symbols provide better statistics but slower rendering"
+        )
+
+        # SNR control
+        snr_db = st.slider(
+            "SNR (dB)",
+            min_value=-5.0,
+            max_value=30.0,
+            value=10.0,
+            step=0.5,
+            help="Signal-to-Noise Ratio - higher means less noise"
+        )
+
+        # Modulation type
+        mod_type = st.radio(
+            "Modulation Type",
+            options=['QAM', 'PSK'],
+            index=0,
+            help="QAM: Quadrature Amplitude Modulation\nPSK: Phase Shift Keying"
+        )
+
+        # Run button
+        run_button = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+        st.divider()
+
+        # Educational info
+        with st.expander("📚 About this Simulation"):
+            bits_per_sym = int(np.log2(mod_order))
+            st.write(f"**{mod_order}-{mod_type}** encodes **{bits_per_sym} bits** per symbol")
+            st.write(f"**Spectral Efficiency:** {bits_per_sym} bits/s/Hz")
+            st.write(f"**Constellation Size:** {mod_order} points")
+
+            st.markdown("""
+            **How it works:**
+            1. Random bits are generated
+            2. Bits are grouped (e.g., 4 bits for 16-QAM)
+            3. Each group maps to a constellation point
+            4. AWGN noise is added based on SNR
+            5. Receiver detects closest constellation point
+            """)
+
+    with col2:
+        st.subheader("📊 Constellation Diagram")
+
+        # Run simulation if button clicked or if never run
+        if run_button or 'last_mod_result' not in st.session_state:
+            with st.spinner("Running simulation..."):
+                # Prepare parameters
+                params = {
+                    'modulation_order': mod_order,
+                    'num_symbols': num_symbols,
+                    'snr_db': snr_db,
+                    'modulation_type': mod_type,
+                    'use_gray_coding': True
+                }
+
+                # Run simulation
+                result = sim.run_simulation(params)
+
+                # Store in session state
+                st.session_state.last_mod_result = result
+
+                # Log to database
+                try:
+                    sim_id = st.session_state.db.insert_simulation_run(
+                        simulation_type="HighOrderModulation",
+                        start_time=result.timestamp,
+                        parameters=params,
+                        simulation_name=f"{mod_order}-{mod_type}"
+                    )
+                    st.session_state.db.update_simulation_run(
+                        sim_id=sim_id,
+                        end_time=datetime.now(),
+                        success=result.success,
+                        execution_time_ms=result.execution_time_ms,
+                        result_summary={
+                            'ber': result.data.get('ber', 0),
+                            'ser': result.data.get('ser', 0)
+                        },
+                        error_message=result.error_message
+                    )
+                except Exception as e:
+                    st.warning(f"Could not log to database: {e}")
+
+        # Display results
+        if 'last_mod_result' in st.session_state:
+            result = st.session_state.last_mod_result
+
+            if result.success:
+                # Create and render visualization
+                viz = HighOrderConstellationPlot(backend='plotly')
+                fig = viz.render(result)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Display metrics
+                st.divider()
+                col_a, col_b, col_c, col_d = st.columns(4)
+
+                with col_a:
+                    st.metric(
+                        "Bit Error Rate",
+                        f"{result.data['ber']:.4f}",
+                        help="Fraction of bits incorrectly decoded"
+                    )
+
+                with col_b:
+                    st.metric(
+                        "Symbol Error Rate",
+                        f"{result.data['ser']:.4f}",
+                        help="Fraction of symbols incorrectly decoded"
+                    )
+
+                with col_c:
+                    st.metric(
+                        "Bit Errors",
+                        f"{result.data['num_bit_errors']}/{len(result.data['bits'])}",
+                        help="Number of bit errors out of total bits"
+                    )
+
+                with col_d:
+                    st.metric(
+                        "Execution Time",
+                        f"{result.execution_time_ms:.1f} ms",
+                        help="Simulation computation time"
+                    )
+
+                # Analysis section
+                with st.expander("📈 Performance Analysis"):
+                    st.markdown(f"""
+                    **Simulation Results for {mod_order}-{mod_type}:**
+
+                    - **Modulation Order:** {mod_order} ({int(np.log2(mod_order))} bits/symbol)
+                    - **SNR:** {snr_db:.1f} dB
+                    - **Symbols Transmitted:** {num_symbols}
+                    - **Total Bits:** {len(result.data['bits'])}
+
+                    **Error Statistics:**
+                    - **BER:** {result.data['ber']:.6f} ({result.data['ber']*100:.4f}%)
+                    - **SER:** {result.data['ser']:.6f} ({result.data['ser']*100:.4f}%)
+                    - **Bit Errors:** {result.data['num_bit_errors']}
+                    - **Symbol Errors:** {result.data['num_symbol_errors']}
+
+                    **Interpretation:**
+                    {"✅ Excellent performance! Low error rate indicates good channel conditions." if result.data['ber'] < 0.01 else ""}
+                    {"⚠️ Moderate errors. Consider increasing SNR or reducing modulation order." if 0.01 <= result.data['ber'] < 0.1 else ""}
+                    {"❌ High error rate. Channel quality is poor for this modulation order." if result.data['ber'] >= 0.1 else ""}
+                    """)
+
+            else:
+                st.error(f"Simulation failed: {result.error_message}")
+        else:
+            st.info("Click 'Run Simulation' to begin")
+
+
 def render_placeholder_simulation(sim_name: str):
     """Render placeholder for simulation modules (to be implemented)."""
     st.header(f"📡 {sim_name}")
@@ -266,8 +463,10 @@ def main():
 
     if selected == "Welcome" or selected is None:
         render_welcome_page()
+    elif selected == "High-Order Modulation (Civilization 1)":
+        render_high_order_modulation()
     else:
-        # Placeholder for simulation modules (will be implemented in Phase 2)
+        # Placeholder for other simulation modules (will be implemented later)
         render_placeholder_simulation(selected)
 
     # Footer
