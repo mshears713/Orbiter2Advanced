@@ -1088,6 +1088,220 @@ def render_ldpc_decoding():
             st.info("Click 'Run Simulation' to begin")
 
 
+def render_mesh_routing():
+    """Render Mesh Routing simulation page."""
+    from simulations.mesh_routing import MeshRoutingSimulation
+    from visualizations.mesh_network_graph import MeshNetworkGraph
+    import numpy as np
+
+    st.header("📡 Mesh Routing (Civilization 5)")
+
+    st.markdown("""
+    **Alien Civilization 5** uses wireless mesh networks with multi-hop routing for
+    decentralized communication. Explore how ad-hoc networks discover routes and
+    forward packets without centralized infrastructure.
+
+    **Learning Objectives:**
+    - Understand wireless mesh network topologies
+    - Learn route discovery and path selection
+    - Visualize multi-hop packet forwarding
+    - Analyze network connectivity and resilience
+    """)
+
+    # Create simulation instance
+    sim = MeshRoutingSimulation()
+
+    # Layout
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("⚙️ Parameters")
+
+        # Number of nodes
+        num_nodes = st.slider(
+            "Number of Nodes",
+            min_value=5,
+            max_value=30,
+            value=15,
+            help="Mesh network size"
+        )
+
+        # Network area
+        network_area = st.slider(
+            "Network Area (m)",
+            min_value=50.0,
+            max_value=150.0,
+            value=100.0,
+            step=10.0,
+            help="Square network area side length"
+        )
+
+        # Transmission range
+        tx_range = st.slider(
+            "Transmission Range (m)",
+            min_value=15.0,
+            max_value=60.0,
+            value=30.0,
+            step=5.0,
+            help="Radio transmission range"
+        )
+
+        # Number of packets
+        num_packets = st.slider(
+            "Packets to Route",
+            min_value=5,
+            max_value=25,
+            value=10,
+            help="Number of packets to simulate"
+        )
+
+        # Node failure probability
+        failure_prob = st.slider(
+            "Node Failure Probability",
+            min_value=0.0,
+            max_value=0.3,
+            value=0.0,
+            step=0.05,
+            help="Probability of node being unavailable"
+        )
+
+        # Run button
+        run_button = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+        st.divider()
+
+        # Educational info
+        with st.expander("📚 About Mesh Networks"):
+            st.markdown("""
+            **Mesh Networks** enable devices to communicate
+            without fixed infrastructure through multi-hop routing.
+
+            **Key Features:**
+            - Decentralized, self-organizing
+            - Redundant paths improve reliability
+            - Dynamic route discovery
+            - Scalable topology
+
+            **Routing:**
+            - Uses shortest-path algorithms
+            - Hop count as routing metric
+            - Route maintenance and recovery
+
+            **Applications:**
+            - Smart city IoT networks
+            - Disaster recovery communications
+            - Military tactical networks
+            - Community wireless networks
+            """)
+
+    with col2:
+        st.subheader("📊 Network Topology")
+
+        # Run simulation
+        if run_button or 'last_mesh_result' not in st.session_state:
+            with st.spinner("Simulating mesh network..."):
+                params = {
+                    'num_nodes': num_nodes,
+                    'network_area': network_area,
+                    'transmission_range': tx_range,
+                    'num_packets': num_packets,
+                    'node_failure_prob': failure_prob
+                }
+
+                result = sim.run_simulation(params)
+                st.session_state.last_mesh_result = result
+
+                # Log to database
+                try:
+                    sim_id = st.session_state.db.insert_simulation_run(
+                        simulation_type="MeshRouting",
+                        start_time=result.timestamp,
+                        parameters=params,
+                        simulation_name=f"{num_nodes} nodes"
+                    )
+                    st.session_state.db.update_simulation_run(
+                        sim_id=sim_id,
+                        end_time=datetime.now(),
+                        success=result.success,
+                        execution_time_ms=result.execution_time_ms,
+                        result_summary={
+                            'pdr': result.data.get('packet_delivery_ratio', 0),
+                            'connected': result.data.get('is_connected', False)
+                        },
+                        error_message=result.error_message
+                    )
+                except Exception as e:
+                    st.warning(f"Could not log to database: {e}")
+
+        # Display results
+        if 'last_mesh_result' in st.session_state:
+            result = st.session_state.last_mesh_result
+
+            if result.success:
+                # Render visualization
+                viz = MeshNetworkGraph(backend='plotly')
+                fig = viz.render(result)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Metrics
+                st.divider()
+                col_a, col_b, col_c, col_d = st.columns(4)
+
+                with col_a:
+                    st.metric(
+                        "PDR",
+                        f"{result.data['packet_delivery_ratio']:.1%}",
+                        help="Packet Delivery Ratio"
+                    )
+
+                with col_b:
+                    connected_icon = "✓" if result.data['is_connected'] else "✗"
+                    st.metric(
+                        "Connected",
+                        connected_icon,
+                        help="Network fully connected"
+                    )
+
+                with col_c:
+                    st.metric(
+                        "Avg Hops",
+                        f"{result.data['avg_hop_count']:.1f}",
+                        help="Average hop count"
+                    )
+
+                with col_d:
+                    st.metric(
+                        "Avg Latency",
+                        f"{result.data['avg_latency_ms']:.1f} ms"
+                    )
+
+                # Analysis
+                with st.expander("📈 Network Analysis"):
+                    st.markdown(f"""
+                    **Network Topology:**
+                    - **Nodes:** {result.metadata['num_nodes']}
+                    - **Edges:** {result.data['num_edges']}
+                    - **Avg Node Degree:** {result.data['avg_node_degree']:.2f}
+                    - **Connected:** {result.data['is_connected']}
+
+                    **Routing Performance:**
+                    - **Packet Delivery Ratio:** {result.data['packet_delivery_ratio']:.1%}
+                    - **Successful Packets:** {result.data['successful_packets']}/{result.metadata['num_packets']}
+                    - **Failed Packets:** {result.data['failed_packets']}
+                    - **Avg Hop Count:** {result.data['avg_hop_count']:.2f}
+                    - **Avg Latency:** {result.data['avg_latency_ms']:.2f} ms
+
+                    **Interpretation:**
+                    {"✅ Excellent! Network is fully connected and all packets delivered." if result.data['is_connected'] and result.data['packet_delivery_ratio'] == 1.0 else ""}
+                    {"⚠️ Network is disconnected - some nodes cannot reach others." if not result.data['is_connected'] else ""}
+                    {"⚠️ Some packet delivery failures. Increase transmission range or node density." if result.data['packet_delivery_ratio'] < 1.0 else ""}
+                    """)
+            else:
+                st.error(f"Simulation failed: {result.error_message}")
+        else:
+            st.info("Click 'Run Simulation' to begin")
+
+
 def render_placeholder_simulation(sim_name: str):
     """Render placeholder for simulation modules (to be implemented)."""
     st.header(f"📡 {sim_name}")
@@ -1140,6 +1354,8 @@ def main():
         render_convolutional_coding()
     elif selected == "LDPC Decoding (Civilization 4)":
         render_ldpc_decoding()
+    elif selected == "Mesh Routing (Civilization 5)":
+        render_mesh_routing()
     else:
         # Placeholder for other simulation modules (will be implemented later)
         render_placeholder_simulation(selected)
