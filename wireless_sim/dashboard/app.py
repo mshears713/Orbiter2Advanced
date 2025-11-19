@@ -419,6 +419,216 @@ def render_high_order_modulation():
             st.info("Click 'Run Simulation' to begin")
 
 
+def render_ofdm_simulation():
+    """Render OFDM Signal Processing simulation page."""
+    from simulations.ofdm import OFDMSimulation
+    from visualizations.ofdm_constellation import OFDMConstellationPlot
+
+    st.header("📡 OFDM Signal Processing (Civilization 2)")
+
+    st.markdown("""
+    **Alien Civilization 2** uses Orthogonal Frequency Division Multiplexing to transmit
+    data in parallel across multiple subcarriers. Explore how OFDM achieves high spectral
+    efficiency and robustness against frequency-selective fading.
+
+    **Learning Objectives:**
+    - Understand IFFT/FFT for OFDM signal generation
+    - Learn the purpose of cyclic prefix
+    - Visualize parallel subcarrier transmission
+    - Explore pilot-aided channel estimation
+    """)
+
+    # Create simulation instance
+    sim = OFDMSimulation()
+
+    # Layout
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("⚙️ Parameters")
+
+        # Number of subcarriers
+        num_subcarriers = st.selectbox(
+            "Number of Subcarriers",
+            options=[16, 32, 64, 128, 256],
+            index=2,  # Default to 64
+            help="FFT size - more subcarriers = finer frequency resolution"
+        )
+
+        # Cyclic prefix length
+        cp_length = st.slider(
+            "Cyclic Prefix Length",
+            min_value=0,
+            max_value=num_subcarriers // 4,
+            value=num_subcarriers // 4,
+            step=4,
+            help="CP guards against intersymbol interference"
+        )
+
+        # Number of OFDM symbols
+        num_symbols = st.slider(
+            "OFDM Symbols",
+            min_value=1,
+            max_value=20,
+            value=5,
+            help="Number of OFDM symbols to transmit"
+        )
+
+        # Subcarrier modulation
+        mod_type = st.selectbox(
+            "Subcarrier Modulation",
+            options=['BPSK', 'QPSK', '16QAM'],
+            index=1,
+            help="Modulation applied to each subcarrier"
+        )
+
+        # SNR
+        snr_db = st.slider(
+            "SNR (dB)",
+            min_value=0.0,
+            max_value=35.0,
+            value=15.0,
+            step=1.0,
+            help="Signal-to-Noise Ratio"
+        )
+
+        # Pilot spacing
+        pilot_spacing = st.slider(
+            "Pilot Spacing",
+            min_value=0,
+            max_value=16,
+            value=8,
+            step=4,
+            help="0 = no pilots, otherwise insert pilot every N subcarriers"
+        )
+
+        # Run button
+        run_button = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+        st.divider()
+
+        # Educational info
+        with st.expander("📚 About OFDM"):
+            bits_per_symbol = {'BPSK': 1, 'QPSK': 2, '16QAM': 4}[mod_type]
+            num_pilots = num_subcarriers // pilot_spacing if pilot_spacing > 0 else 0
+            num_data = num_subcarriers - num_pilots
+            spectral_eff = bits_per_symbol * num_data / (num_subcarriers + cp_length)
+
+            st.write(f"**Subcarriers:** {num_subcarriers}")
+            st.write(f"**Data Subcarriers:** {num_data}")
+            st.write(f"**Pilot Subcarriers:** {num_pilots}")
+            st.write(f"**Spectral Efficiency:** {spectral_eff:.2f} bits/s/Hz")
+
+            st.markdown("""
+            **OFDM Advantages:**
+            - High spectral efficiency
+            - Robustness to multipath fading
+            - Flexible resource allocation
+            - Used in WiFi, LTE, 5G
+
+            **Key Components:**
+            - IFFT: Converts frequency to time domain
+            - Cyclic Prefix: Eliminates ISI
+            - Pilots: Enable channel estimation
+            """)
+
+    with col2:
+        st.subheader("📊 OFDM Visualization")
+
+        # Run simulation
+        if run_button or 'last_ofdm_result' not in st.session_state:
+            with st.spinner("Running OFDM simulation..."):
+                params = {
+                    'num_subcarriers': num_subcarriers,
+                    'cp_length': cp_length,
+                    'num_symbols': num_symbols,
+                    'subcarrier_modulation': mod_type,
+                    'snr_db': snr_db,
+                    'pilot_spacing': pilot_spacing
+                }
+
+                result = sim.run_simulation(params)
+                st.session_state.last_ofdm_result = result
+
+                # Log to database
+                try:
+                    sim_id = st.session_state.db.insert_simulation_run(
+                        simulation_type="OFDM",
+                        start_time=result.timestamp,
+                        parameters=params,
+                        simulation_name=f"{num_subcarriers}-SC OFDM"
+                    )
+                    st.session_state.db.update_simulation_run(
+                        sim_id=sim_id,
+                        end_time=datetime.now(),
+                        success=result.success,
+                        execution_time_ms=result.execution_time_ms,
+                        result_summary={'ber': result.data.get('ber', 0)},
+                        error_message=result.error_message
+                    )
+                except Exception as e:
+                    st.warning(f"Could not log to database: {e}")
+
+        # Display results
+        if 'last_ofdm_result' in st.session_state:
+            result = st.session_state.last_ofdm_result
+
+            if result.success:
+                # Render visualization
+                viz = OFDMConstellationPlot(backend='plotly')
+                fig = viz.render(result)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Metrics
+                st.divider()
+                col_a, col_b, col_c, col_d = st.columns(4)
+
+                with col_a:
+                    st.metric("BER", f"{result.data['ber']:.6f}")
+
+                with col_b:
+                    st.metric(
+                        "Spectral Efficiency",
+                        f"{result.metadata['spectral_efficiency']:.2f}",
+                        help="Bits per second per Hz"
+                    )
+
+                with col_c:
+                    st.metric(
+                        "Bit Errors",
+                        f"{result.data['num_bit_errors']}/{len(result.data['bits'])}"
+                    )
+
+                with col_d:
+                    st.metric("Exec Time", f"{result.execution_time_ms:.1f} ms")
+
+                # Analysis
+                with st.expander("📈 OFDM Performance Analysis"):
+                    st.markdown(f"""
+                    **Configuration:**
+                    - Subcarriers: {result.metadata['num_subcarriers']}
+                    - CP Length: {result.metadata['cp_length']} samples
+                    - Modulation: {result.metadata['subcarrier_modulation']}
+                    - Bits/Symbol: {result.metadata['bits_per_symbol']}
+
+                    **Results:**
+                    - BER: {result.data['ber']:.8f}
+                    - Bit Errors: {result.data['num_bit_errors']}
+                    - SNR: {result.data['actual_snr_db']:.2f} dB
+                    - Spectral Efficiency: {result.metadata['spectral_efficiency']:.3f} bits/s/Hz
+
+                    **CP Overhead:** {result.metadata['cp_length'] / (result.metadata['num_subcarriers'] + result.metadata['cp_length']) * 100:.1f}%
+
+                    {"✅ Excellent! OFDM performing well." if result.data['ber'] < 0.001 else ""}
+                    {"⚠️ Moderate errors detected." if 0.001 <= result.data['ber'] < 0.01 else ""}
+                    {"❌ High error rate - increase SNR or reduce modulation order." if result.data['ber'] >= 0.01 else ""}
+                    """)
+            else:
+                st.error(f"Simulation failed: {result.error_message}")
+        else:
+            st.info("Click 'Run Simulation' to begin")
+
+
 def render_placeholder_simulation(sim_name: str):
     """Render placeholder for simulation modules (to be implemented)."""
     st.header(f"📡 {sim_name}")
@@ -465,6 +675,8 @@ def main():
         render_welcome_page()
     elif selected == "High-Order Modulation (Civilization 1)":
         render_high_order_modulation()
+    elif selected == "OFDM Signal Processing (Civilization 2)":
+        render_ofdm_simulation()
     else:
         # Placeholder for other simulation modules (will be implemented later)
         render_placeholder_simulation(selected)
