@@ -9,7 +9,8 @@ Date: 2025-11-19
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, List, Type
+import numpy as np
 from models.datamodels import SimulationResult
 from simulations.exceptions import SimulationError
 
@@ -210,6 +211,241 @@ class SimulationModule(ABC):
             Subclasses can override this to provide custom descriptions
         """
         return f"{self.get_name()} simulation module"
+
+    def merge_with_defaults(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge provided parameters with defaults.
+
+        Fills in any missing parameters with default values from
+        get_default_parameters().
+
+        Args:
+            parameters: User-provided parameters (may be partial)
+
+        Returns:
+            Complete parameter dictionary with defaults filled in
+
+        Example:
+            >>> params = {'snr_db': 15.0}
+            >>> complete = sim.merge_with_defaults(params)
+            >>> complete
+            {'snr_db': 15.0, 'modulation_order': 16, 'num_symbols': 1000}
+        """
+        defaults = self.get_default_parameters()
+        merged = defaults.copy()
+        merged.update(parameters)
+        return merged
+
+    def add_awgn_noise(
+        self,
+        signal: np.ndarray,
+        snr_db: float,
+        signal_power: float = None
+    ) -> tuple[np.ndarray, float]:
+        """Add Additive White Gaussian Noise to signal.
+
+        Helper method for adding AWGN to achieve a specified SNR.
+        Handles both real and complex signals.
+
+        Args:
+            signal: Input signal (real or complex numpy array)
+            snr_db: Desired SNR in decibels
+            signal_power: Pre-computed signal power (optional, calculated if None)
+
+        Returns:
+            Tuple of (noisy_signal, noise_power_used)
+
+        Example:
+            >>> clean_signal = np.array([1+1j, -1+1j, -1-1j, 1-1j])
+            >>> noisy, noise_pwr = sim.add_awgn_noise(clean_signal, 10.0)
+        """
+        # Calculate signal power if not provided
+        if signal_power is None:
+            signal_power = np.mean(np.abs(signal)**2)
+
+        # Convert SNR from dB to linear scale
+        snr_linear = 10 ** (snr_db / 10.0)
+
+        # Calculate required noise power
+        noise_power = signal_power / snr_linear
+
+        # Generate noise based on signal type
+        if np.iscomplexobj(signal):
+            # Complex signal: split noise between I and Q
+            noise_std = np.sqrt(noise_power / 2)
+            noise = noise_std * (np.random.randn(*signal.shape) + 1j * np.random.randn(*signal.shape))
+        else:
+            # Real signal
+            noise_std = np.sqrt(noise_power)
+            noise = noise_std * np.random.randn(*signal.shape)
+
+        noisy_signal = signal + noise
+        return noisy_signal, noise_power
+
+    def calculate_ber(
+        self,
+        transmitted_bits: np.ndarray,
+        received_bits: np.ndarray
+    ) -> tuple[float, int]:
+        """Calculate Bit Error Rate.
+
+        Compares transmitted and received bit sequences to compute BER.
+
+        Args:
+            transmitted_bits: Original transmitted bits (0s and 1s)
+            received_bits: Decoded received bits (0s and 1s)
+
+        Returns:
+            Tuple of (ber, num_errors)
+                - ber: Bit error rate (fraction)
+                - num_errors: Number of bit errors
+
+        Example:
+            >>> tx_bits = np.array([1, 0, 1, 1, 0])
+            >>> rx_bits = np.array([1, 0, 0, 1, 0])
+            >>> ber, errors = sim.calculate_ber(tx_bits, rx_bits)
+            >>> ber
+            0.2
+            >>> errors
+            1
+        """
+        # Ensure equal length (truncate to shorter if needed)
+        min_len = min(len(transmitted_bits), len(received_bits))
+        tx = transmitted_bits[:min_len]
+        rx = received_bits[:min_len]
+
+        # Count errors
+        errors = np.sum(tx != rx)
+        ber = errors / min_len if min_len > 0 else 0.0
+
+        return ber, int(errors)
+
+    def calculate_ser(
+        self,
+        transmitted_symbols: np.ndarray,
+        received_symbols: np.ndarray,
+        constellation: np.ndarray = None
+    ) -> tuple[float, int]:
+        """Calculate Symbol Error Rate.
+
+        Compares transmitted and received symbol sequences to compute SER.
+        If constellation is provided, performs nearest-neighbor detection
+        on received symbols first.
+
+        Args:
+            transmitted_symbols: Original transmitted symbols
+            received_symbols: Received symbols (possibly noisy)
+            constellation: Reference constellation for detection (optional)
+
+        Returns:
+            Tuple of (ser, num_errors)
+                - ser: Symbol error rate (fraction)
+                - num_errors: Number of symbol errors
+
+        Example:
+            >>> tx_syms = np.array([1+1j, -1+1j, 1-1j])
+            >>> rx_syms = np.array([0.9+1.1j, -1.1+0.9j, 1.1-1.2j])
+            >>> qpsk = np.array([1+1j, -1+1j, -1-1j, 1-1j]) / np.sqrt(2)
+            >>> ser, errors = sim.calculate_ser(tx_syms, rx_syms, qpsk)
+        """
+        min_len = min(len(transmitted_symbols), len(received_symbols))
+        tx = transmitted_symbols[:min_len]
+        rx = received_symbols[:min_len]
+
+        if constellation is not None:
+            # Perform nearest-neighbor detection
+            distances = np.abs(rx[:, np.newaxis] - constellation[np.newaxis, :])
+            detected_indices = np.argmin(distances, axis=1)
+            detected_symbols = constellation[detected_indices]
+
+            # Compare detected symbols to transmitted
+            errors = np.sum(~np.isclose(tx, detected_symbols, rtol=1e-5))
+        else:
+            # Direct comparison (symbols must match exactly)
+            errors = np.sum(~np.isclose(tx, rx, rtol=1e-5))
+
+        ser = errors / min_len if min_len > 0 else 0.0
+        return ser, int(errors)
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Get module capabilities and metadata.
+
+        Returns information about what this simulation can do,
+        useful for dynamic UI generation and module discovery.
+
+        Returns:
+            Dictionary with:
+                - name: Module name
+                - parameters: Parameter schema
+                - defaults: Default parameter values
+                - description: Module description
+                - tags: List of relevant tags
+
+        Example:
+            >>> caps = sim.get_capabilities()
+            >>> caps['name']
+            'High-Order Modulation'
+        """
+        return {
+            'name': self.get_name(),
+            'description': self.get_description(),
+            'parameters': self.get_parameter_schema(),
+            'defaults': self.get_default_parameters(),
+            'tags': self.get_tags() if hasattr(self, 'get_tags') else []
+        }
+
+
+# Module Registry for dynamic discovery
+_simulation_registry: List[Type[SimulationModule]] = []
+
+
+def register_simulation(cls: Type[SimulationModule]) -> Type[SimulationModule]:
+    """Decorator to register a simulation module.
+
+    Use this decorator on simulation classes to automatically
+    register them for discovery.
+
+    Args:
+        cls: SimulationModule subclass to register
+
+    Returns:
+        The same class (allows use as decorator)
+
+    Example:
+        >>> @register_simulation
+        ... class MySimulation(SimulationModule):
+        ...     pass
+    """
+    if cls not in _simulation_registry:
+        _simulation_registry.append(cls)
+    return cls
+
+
+def get_registered_simulations() -> List[Type[SimulationModule]]:
+    """Get all registered simulation modules.
+
+    Returns:
+        List of registered SimulationModule classes
+
+    Example:
+        >>> sims = get_registered_simulations()
+        >>> for sim_class in sims:
+        ...     print(sim_class().get_name())
+    """
+    return _simulation_registry.copy()
+
+
+def discover_simulations() -> Dict[str, Type[SimulationModule]]:
+    """Discover all available simulation modules.
+
+    Returns:
+        Dictionary mapping simulation names to their classes
+
+    Example:
+        >>> available = discover_simulations()
+        >>> available.keys()
+        dict_keys(['High-Order Modulation', 'OFDM Signal Processing', ...])
+    """
+    return {sim_class().get_name(): sim_class for sim_class in _simulation_registry}
 
 
 if __name__ == "__main__":

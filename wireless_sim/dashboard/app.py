@@ -629,6 +629,465 @@ def render_ofdm_simulation():
             st.info("Click 'Run Simulation' to begin")
 
 
+def render_convolutional_coding():
+    """Render Convolutional Coding simulation page."""
+    from simulations.convolutional_coding import ConvolutionalCodingSimulation
+    from visualizations.convolutional_trellis import ConvolutionalTrellisPlot
+    import numpy as np
+
+    st.header("📡 Convolutional Coding (Civilization 3)")
+
+    st.markdown("""
+    **Alien Civilization 3** employs convolutional codes with Viterbi decoding for robust
+    forward error correction. Explore how trellis-based codes protect data against channel
+    errors through memory-based encoding and maximum likelihood decoding.
+
+    **Learning Objectives:**
+    - Understand convolutional code structure
+    - Visualize trellis state diagrams
+    - Learn the Viterbi algorithm
+    - Explore coding gain vs uncoded transmission
+    """)
+
+    # Create simulation instance
+    sim = ConvolutionalCodingSimulation()
+
+    # Layout
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("⚙️ Parameters")
+
+        # Constraint length
+        constraint_length = st.selectbox(
+            "Constraint Length (K)",
+            options=[3, 5, 7, 9],
+            index=2,  # Default to K=7
+            help="K=7 is industry standard (used in WiFi, satellites)"
+        )
+
+        # Number of information bits
+        num_bits = st.slider(
+            "Information Bits",
+            min_value=20,
+            max_value=200,
+            value=50,
+            step=10,
+            help="Number of information bits to encode (keep small for trellis viz)"
+        )
+
+        # SNR
+        snr_db = st.slider(
+            "SNR (dB)",
+            min_value=-2.0,
+            max_value=10.0,
+            value=3.0,
+            step=0.5,
+            help="Lower SNR demonstrates coding gain better"
+        )
+
+        # Generator polynomials (show for reference)
+        generator_polys = {
+            3: [0o5, 0o7],
+            5: [0o23, 0o35],
+            7: [0o171, 0o133],
+            9: [0o753, 0o561]
+        }
+        gen_poly = generator_polys[constraint_length]
+
+        st.text(f"Generator polynomials (octal):")
+        st.code(f"G1 = {oct(gen_poly[0])}\nG2 = {oct(gen_poly[1])}", language="text")
+
+        # Code rate
+        st.metric("Code Rate", "1/2", help="2 output bits per 1 input bit")
+
+        # Run button
+        run_button = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+        st.divider()
+
+        # Educational info
+        with st.expander("📚 About Convolutional Coding"):
+            num_states = 2 ** (constraint_length - 1)
+            st.write(f"**Constraint Length:** K={constraint_length}")
+            st.write(f"**Number of States:** {num_states}")
+            st.write(f"**Memory Length:** {constraint_length - 1}")
+            st.write(f"**Code Rate:** 1/2 (50% efficiency)")
+
+            st.markdown("""
+            **How it works:**
+            1. Input bits shift through register
+            2. Generator polynomials create output bits
+            3. Rate 1/2 means 2 outputs per 1 input
+            4. Viterbi decoder finds most likely path
+            5. Soft decisions use received values
+
+            **Applications:**
+            - Satellite communications
+            - Deep-space probes (Voyager, etc.)
+            - WiFi (802.11)
+            - GSM cellular
+            - Digital video broadcasting
+            """)
+
+    with col2:
+        st.subheader("📊 Trellis Diagram & Performance")
+
+        # Run simulation
+        if run_button or 'last_conv_result' not in st.session_state:
+            with st.spinner("Running convolutional coding simulation..."):
+                params = {
+                    'constraint_length': constraint_length,
+                    'num_bits': num_bits,
+                    'snr_db': snr_db,
+                    'generator_polynomials': gen_poly
+                }
+
+                result = sim.run_simulation(params)
+                st.session_state.last_conv_result = result
+
+                # Log to database
+                try:
+                    sim_id = st.session_state.db.insert_simulation_run(
+                        simulation_type="ConvolutionalCoding",
+                        start_time=result.timestamp,
+                        parameters=params,
+                        simulation_name=f"K={constraint_length} Conv Code"
+                    )
+                    st.session_state.db.update_simulation_run(
+                        sim_id=sim_id,
+                        end_time=datetime.now(),
+                        success=result.success,
+                        execution_time_ms=result.execution_time_ms,
+                        result_summary={
+                            'ber': result.data.get('ber', 0),
+                            'coding_gain_db': result.data.get('coding_gain_db', 0)
+                        },
+                        error_message=result.error_message
+                    )
+                except Exception as e:
+                    st.warning(f"Could not log to database: {e}")
+
+        # Display results
+        if 'last_conv_result' in st.session_state:
+            result = st.session_state.last_conv_result
+
+            if result.success:
+                # Render trellis visualization
+                viz = ConvolutionalTrellisPlot(backend='plotly', max_stages=20)
+                fig = viz.render(result)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Metrics
+                st.divider()
+                col_a, col_b, col_c, col_d = st.columns(4)
+
+                with col_a:
+                    st.metric(
+                        "Coded BER",
+                        f"{result.data['ber']:.6f}",
+                        help="Bit error rate with convolutional coding"
+                    )
+
+                with col_b:
+                    st.metric(
+                        "Uncoded BER",
+                        f"{result.data['uncoded_ber']:.6f}",
+                        help="BER without coding (for comparison)"
+                    )
+
+                with col_c:
+                    coding_gain = result.data['coding_gain_db']
+                    st.metric(
+                        "Coding Gain",
+                        f"{coding_gain:.2f} dB" if coding_gain < float('inf') else "∞ dB",
+                        help="Improvement over uncoded transmission"
+                    )
+
+                with col_d:
+                    st.metric(
+                        "Bit Errors",
+                        f"{result.data['bit_errors']}/{num_bits}"
+                    )
+
+                # Analysis
+                with st.expander("📈 Coding Performance Analysis"):
+                    st.markdown(f"""
+                    **Code Configuration:**
+                    - Constraint Length: K={result.metadata['constraint_length']}
+                    - Code Rate: {result.metadata['code_rate']}
+                    - Number of States: {result.metadata['num_states']}
+                    - Generator Polynomials: {[oct(g) for g in result.metadata['generator_polynomials']]}
+
+                    **Performance Results:**
+                    - **Coded BER:** {result.data['ber']:.8f}
+                    - **Uncoded BER:** {result.data['uncoded_ber']:.8f}
+                    - **Coding Gain:** {result.data['coding_gain_db']:.2f} dB
+                    - **Bit Errors (Coded):** {result.data['bit_errors']}/{num_bits}
+                    - **Bit Errors (Uncoded):** {result.data['uncoded_errors']}/{num_bits}
+
+                    **SNR:** {snr_db:.1f} dB
+
+                    **Interpretation:**
+                    {"✅ Excellent coding gain! Convolutional code significantly reduced errors." if result.data['coding_gain_db'] > 3.0 else ""}
+                    {"⚠️ Moderate coding gain. Consider higher constraint length." if 1.0 <= result.data['coding_gain_db'] <= 3.0 else ""}
+                    {"📊 Minimal errors detected - SNR may be too high to see coding benefit." if result.data['ber'] < 0.001 and result.data['uncoded_ber'] < 0.001 else ""}
+
+                    **Trellis Diagram Above:**
+                    - Red path shows the decoded survivor path
+                    - Each stage represents one information bit
+                    - States shown as binary representations
+                    - Viterbi algorithm finds maximum likelihood path
+                    """)
+            else:
+                st.error(f"Simulation failed: {result.error_message}")
+        else:
+            st.info("Click 'Run Simulation' to begin")
+
+
+def render_ldpc_decoding():
+    """Render LDPC Decoding simulation page."""
+    from simulations.ldpc_decoding import LDPCDecodingSimulation
+    from visualizations.ldpc_iteration_heatmap import LDPCIterationHeatmap
+    import numpy as np
+
+    st.header("📡 LDPC Decoding (Civilization 4)")
+
+    st.markdown("""
+    **Alien Civilization 4** uses Low-Density Parity-Check (LDPC) codes with belief
+    propagation for near-capacity error correction. Explore how iterative message passing
+    on sparse graphs achieves excellent performance.
+
+    **Learning Objectives:**
+    - Understand sparse parity-check matrices
+    - Learn belief propagation algorithm
+    - Visualize LLR convergence across iterations
+    - Explore near-Shannon-limit performance
+    """)
+
+    # Create simulation instance
+    sim = LDPCDecodingSimulation()
+
+    # Layout
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("⚙️ Parameters")
+
+        # Block length
+        block_length = st.selectbox(
+            "Block Length (n)",
+            options=[50, 100, 150, 200],
+            index=1,  # Default to 100
+            help="LDPC codeword length"
+        )
+
+        # Code rate
+        code_rate = st.slider(
+            "Code Rate",
+            min_value=0.3,
+            max_value=0.8,
+            value=0.5,
+            step=0.1,
+            help="Information bits / codeword bits (k/n)"
+        )
+
+        # Max iterations
+        max_iterations = st.slider(
+            "Max BP Iterations",
+            min_value=5,
+            max_value=30,
+            value=20,
+            step=5,
+            help="Maximum belief propagation iterations"
+        )
+
+        # SNR
+        snr_db = st.slider(
+            "SNR (dB)",
+            min_value=-1.0,
+            max_value=5.0,
+            value=2.0,
+            step=0.5,
+            help="Signal-to-Noise Ratio for BPSK"
+        )
+
+        # Early termination
+        early_term = st.checkbox(
+            "Early Termination",
+            value=True,
+            help="Stop iterations if syndrome becomes zero"
+        )
+
+        # Variable and check degrees
+        st.text("Graph Structure:")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            var_degree = st.number_input("dv", min_value=2, max_value=5, value=3,
+                                        help="Variable node degree")
+        with col_b:
+            check_degree = st.number_input("dc", min_value=4, max_value=10, value=6,
+                                          help="Check node degree")
+
+        # Info metrics
+        k = int(block_length * code_rate)
+        st.metric("Info Bits (k)", k)
+        st.metric("Parity Bits (m)", block_length - k)
+
+        # Run button
+        run_button = st.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+        st.divider()
+
+        # Educational info
+        with st.expander("📚 About LDPC Codes"):
+            st.markdown("""
+            **LDPC Codes** are graph-based codes that achieve
+            near-Shannon-limit performance through iterative decoding.
+
+            **Key Features:**
+            - Sparse parity-check matrix H
+            - Tanner graph representation
+            - Belief propagation (sum-product algorithm)
+            - Iterative soft-decision decoding
+
+            **Applications:**
+            - 5G NR (New Radio)
+            - WiFi 6 (802.11ax)
+            - DVB-S2 (satellite TV)
+            - 10GBASE-T Ethernet
+            - Deep space communications
+
+            **Decoding Process:**
+            1. Initialize variable nodes with channel LLRs
+            2. Check nodes send parity messages
+            3. Variable nodes update beliefs
+            4. Repeat until convergence or max iterations
+            """)
+
+    with col2:
+        st.subheader("📊 Iteration Heatmap & Convergence")
+
+        # Run simulation
+        if run_button or 'last_ldpc_result' not in st.session_state:
+            with st.spinner("Running LDPC decoding simulation..."):
+                params = {
+                    'block_length': block_length,
+                    'code_rate': code_rate,
+                    'max_iterations': max_iterations,
+                    'snr_db': snr_db,
+                    'early_termination': early_term,
+                    'variable_degree': var_degree,
+                    'check_degree': check_degree
+                }
+
+                result = sim.run_simulation(params)
+                st.session_state.last_ldpc_result = result
+
+                # Log to database
+                try:
+                    sim_id = st.session_state.db.insert_simulation_run(
+                        simulation_type="LDPC",
+                        start_time=result.timestamp,
+                        parameters=params,
+                        simulation_name=f"n={block_length}, R={code_rate}"
+                    )
+                    st.session_state.db.update_simulation_run(
+                        sim_id=sim_id,
+                        end_time=datetime.now(),
+                        success=result.success,
+                        execution_time_ms=result.execution_time_ms,
+                        result_summary={
+                            'ber': result.data.get('ber', 0),
+                            'converged': result.data.get('converged', False)
+                        },
+                        error_message=result.error_message
+                    )
+                except Exception as e:
+                    st.warning(f"Could not log to database: {e}")
+
+        # Display results
+        if 'last_ldpc_result' in st.session_state:
+            result = st.session_state.last_ldpc_result
+
+            if result.success:
+                # Render visualization
+                viz = LDPCIterationHeatmap(backend='plotly')
+                fig = viz.render(result)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Metrics
+                st.divider()
+                col_a, col_b, col_c, col_d = st.columns(4)
+
+                with col_a:
+                    st.metric(
+                        "BER",
+                        f"{result.data['ber']:.6f}",
+                        help="Bit error rate (all bits)"
+                    )
+
+                with col_b:
+                    st.metric(
+                        "Info BER",
+                        f"{result.data['info_ber']:.6f}",
+                        help="Bit error rate (info bits only)"
+                    )
+
+                with col_c:
+                    converged_icon = "✓" if result.data['converged'] else "✗"
+                    st.metric(
+                        "Converged",
+                        converged_icon,
+                        help="Whether syndrome reached zero"
+                    )
+
+                with col_d:
+                    st.metric(
+                        "Iterations",
+                        f"{result.data['num_iterations']}/{max_iterations}",
+                        help="BP iterations performed"
+                    )
+
+                # Analysis
+                with st.expander("📈 LDPC Performance Analysis"):
+                    st.markdown(f"""
+                    **Code Configuration:**
+                    - Block Length (n): {result.metadata['block_length']}
+                    - Info Length (k): {result.metadata['info_length']}
+                    - Code Rate: {result.metadata['code_rate']:.2f}
+                    - Parity Checks (m): {result.metadata['num_parity_checks']}
+                    - Variable Node Degree: {result.metadata['variable_degree']}
+                    - Check Node Degree: {result.metadata['check_degree']}
+
+                    **Decoding Results:**
+                    - **BER (all bits):** {result.data['ber']:.8f}
+                    - **BER (info bits):** {result.data['info_ber']:.8f}
+                    - **Bit Errors:** {result.data['bit_errors']}/{result.metadata['block_length']}
+                    - **Info Bit Errors:** {result.data['info_bit_errors']}/{result.metadata['info_length']}
+                    - **Converged:** {result.data['converged']}
+                    - **Iterations Used:** {result.data['num_iterations']}/{result.metadata['max_iterations']}
+
+                    **SNR:** {snr_db:.1f} dB
+
+                    **Interpretation:**
+                    {"✅ Perfect decoding! All bits correct, syndrome converged." if result.data['ber'] == 0 and result.data['converged'] else ""}
+                    {"⚠️ Some errors remain. Try increasing SNR or max iterations." if result.data['ber'] > 0 and not result.data['converged'] else ""}
+                    {"✓ Decoding converged (syndrome=0) with minimal errors." if result.data['converged'] and result.data['ber'] > 0 else ""}
+
+                    **Belief Propagation:**
+                    - LDPC uses iterative message passing on Tanner graph
+                    - Variable nodes and check nodes exchange LLR messages
+                    - Convergence indicated by syndrome weight reaching zero
+                    - Each iteration refines bit confidence (LLR magnitudes)
+                    - See heatmap above for LLR evolution
+                    """)
+            else:
+                st.error(f"Simulation failed: {result.error_message}")
+        else:
+            st.info("Click 'Run Simulation' to begin")
+
+
 def render_placeholder_simulation(sim_name: str):
     """Render placeholder for simulation modules (to be implemented)."""
     st.header(f"📡 {sim_name}")
@@ -677,6 +1136,10 @@ def main():
         render_high_order_modulation()
     elif selected == "OFDM Signal Processing (Civilization 2)":
         render_ofdm_simulation()
+    elif selected == "Convolutional Coding (Civilization 3)":
+        render_convolutional_coding()
+    elif selected == "LDPC Decoding (Civilization 4)":
+        render_ldpc_decoding()
     else:
         # Placeholder for other simulation modules (will be implemented later)
         render_placeholder_simulation(selected)
